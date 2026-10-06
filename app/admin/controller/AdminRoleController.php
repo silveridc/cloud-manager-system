@@ -93,7 +93,10 @@ class AdminRoleController extends AdminBaseController
      * @url /{admin}/v1/admin/role
      * @param string name - 规则名称
      * @param string description - 管理员规则描述
-     * @param string rules - 规则
+     * @param int level - 角色层级，数值越大层级越高
+     * @param int delegable - 是否允许上级管理员委派，0否1是
+     * @param array rules. - 权限规则列表
+     * @remark 层级数值越大权限层级越高；普通管理员只能操作低于自身最高层级且权限为自身权限子集的可委派角色
      * @return json
      * @return int id - \app\admin\logic\AdminRoleLogic::CreateAdminRole
      * @throws \Throwable
@@ -104,7 +107,7 @@ class AdminRoleController extends AdminBaseController
         $result = [
             'status' => 200,
             'messages' => lang('success_message'),
-            'id' => $this->AdminRoleLogic->CreateAdminRole($params),
+            'id' => $this->AdminRoleLogic->CreateAdminRole($this->adminId(), $params),
             'time' => time(),
         ];
         return json($result);
@@ -120,7 +123,10 @@ class AdminRoleController extends AdminBaseController
      * @param int id - 规则id
      * @param string name - 规则名称
      * @param string description - 规则描述
+     * @param int level - 角色层级，数值越大层级越高
+     * @param int delegable - 是否允许上级管理员委派，0否1是
      * @param array rules. - 权限规则列表
+     * @remark 层级数值越大权限层级越高；普通管理员只能操作低于自身最高层级且权限为自身权限子集的可委派角色
      * @return json
      * @return int status - 状态码
      * @return string messages - 提示信息
@@ -130,7 +136,7 @@ class AdminRoleController extends AdminBaseController
     public function UpdateAdminRole(int $id)
     {
         $params = $this->request->param();
-        $this->AdminRoleLogic->UpdateAdminRole($id,$params);
+        $this->AdminRoleLogic->UpdateAdminRole($this->adminId(), $id, $params);
         $result = [
             'status' => 200,
             'messages' => lang('update_success'),
@@ -154,7 +160,7 @@ class AdminRoleController extends AdminBaseController
      */
     public function DeleteAdminRole(int $id)
     {
-        $this->AdminRoleLogic->DeleteAdminRole($id);
+        $this->AdminRoleLogic->DeleteAdminRole($this->adminId(), $id);
         $result = [
             'status' => 200,
             'messages' => lang('delete_success'),

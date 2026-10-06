@@ -25,6 +25,7 @@ class ClientModel extends Model
         'password'         => 'string',
         'operate_password' => 'string',
         'status'           => 'int',
+        'session_version'  => 'int',
         'credit'           => 'decimal',
         'company'          => 'string',
         'address'          => 'string',

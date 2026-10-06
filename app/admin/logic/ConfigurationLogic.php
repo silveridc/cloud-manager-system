@@ -20,9 +20,9 @@ class ConfigurationLogic
     public function getGroup(string $group): array
     {
         $ConfigurationModel = new ConfigurationModel();
-        return $ConfigurationModel
+        return $this->maskSensitive($ConfigurationModel
             ->where('group', $group)
-            ->column('value', 'setting');
+            ->column('value', 'setting'));
     }
 
     /**
@@ -38,15 +38,21 @@ class ConfigurationLogic
             ->column('value', 'setting');
 
         // 脱敏处理：隐藏敏感配置值
-        $sensitiveKeys = ['smtp_password', 'api_secret', 'gateway_key', 'gateway_secret', 'sms_key', 'oss_secret'];
+        return $this->maskSensitive($configs);
+    }
+
+    private function maskSensitive(array $configs): array
+    {
+        $sensitiveKeys = ['password', 'secret', 'gateway_key', 'sms_key', 'oss_key', 'access_key', 'private_key', 'token'];
         foreach ($configs as $key => &$value) {
             foreach ($sensitiveKeys as $sensitive) {
                 if (stripos($key, $sensitive) !== false && !empty($value)) {
-                    $value = '******' . mb_substr($value, -4);
+                    $value = '******' . mb_substr((string)$value, -4);
                     break;
                 }
             }
         }
+        unset($value);
 
         return $configs;
     }
@@ -62,6 +68,10 @@ class ConfigurationLogic
     {
         $ConfigurationModel = new ConfigurationModel();
         foreach ($settings as $key => $value) {
+            if (is_string($value) && str_starts_with($value, '******')) {
+                continue;
+            }
+
             $ConfigurationModel
                 ->where('setting', $key)
                 ->update(['value' => $value]);

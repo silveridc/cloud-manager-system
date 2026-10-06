@@ -41,9 +41,14 @@ class AdminAuth
             return json(['status' => 401, 'messages' => lang('token_invalid'), 'time' => time()], 401);
         }
 
-        // 检查密码是否已变更（token 失效）
+        // 检查会话版本（密码、角色或状态变更后强制重新登录）
+        if (($payload['session_version'] ?? 0) !== JwtService::getSessionVersion('admin', (int)$payload['id'])) {
+            return json(['status' => 401, 'messages' => lang('password_changed_relogin'), 'time' => time()], 401);
+        }
+
+        // 检查密码是否已变更（兼容旧 Token）
         $pwdChanged = Cache::get('admin_pwd_changed:' . $payload['id']);
-        if ($pwdChanged && $pwdChanged > ($payload['nbf'] ?? 0)) {
+        if ($pwdChanged && $pwdChanged >= ($payload['nbf'] ?? 0)) {
             return json(['status' => 401, 'messages' => lang('password_changed_relogin'), 'time' => time()], 401);
         }
 
@@ -54,7 +59,7 @@ class AdminAuth
         }
 
         // RBAC 权限检查
-        if (!$this->checkPermission($payload['id'], $request)) {
+        if (!$this->checkPermission($payload['id'], (int)$payload['session_version'], $request)) {
             return json(['status' => 403, 'messages' => lang('permission_denied'), 'time' => time()], 403);
         }
 
@@ -85,14 +90,14 @@ class AdminAuth
     /**
      * RBAC 权限检查
      */
-    private function checkPermission(int $adminId, Request $request): bool
+    private function checkPermission(int $adminId, int $sessionVersion, Request $request): bool
     {
         // 超级管理员跳过权限检查
         if ($adminId === 1) {
             return true;
         }
 
-        $Cache = 'admin_rules:' . $adminId;
+        $Cache = 'admin_rules:' . $adminId . ':' . $sessionVersion;
         $rules = Cache::get($Cache);
 
         if ($rules === null) {

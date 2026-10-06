@@ -20,6 +20,8 @@ class AdminRoleModel extends Model
         'id'          => 'int',
         'name'        => 'string',
         'description' => 'string',
+        'level'       => 'int',
+        'delegable'   => 'int',
         'create_time' => 'int',
         'update_time' => 'int',
     ];

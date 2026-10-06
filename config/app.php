@@ -57,4 +57,7 @@ return [
     // 分页默认值
     'page' => 1,
     'limit' => 20,
+
+    // 未支付订单保留时长（秒）
+    'unpaid_order_expire' => env('app.unpaid_order_expire', 1800),
 ];

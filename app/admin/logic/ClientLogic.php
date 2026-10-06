@@ -1,5 +1,7 @@
 <?php
 namespace app\admin\logic;
+use think\facade\Cache;
+use app\common\service\JwtService;
 use app\admin\entity\ClientEntity;
 use app\common\model\ClientModel;
 use app\common\model\HostModel;
@@ -137,6 +139,9 @@ class ClientLogic
 
         if (!empty($updateData)) {
             $client->save($updateData);
+            if (isset($updateData['password']) || (isset($updateData['status']) && (int)$updateData['status'] !== 1)) {
+                JwtService::invalidateSessions('client', $id);
+            }
             Event::trigger('after_client_update', ['client_id' => $id, 'data' => $updateData]);
         }
         return [
@@ -183,6 +188,7 @@ class ClientLogic
         $client->startTrans();
         try {
             $client->save(['status' => 0]);
+            JwtService::invalidateSessions('client', $id);
             Event::trigger('after_client_disabled', ['client_id' => $id]);
             $client->commit();
         } catch (\Throwable $e) {
@@ -232,6 +238,7 @@ class ClientLogic
         $client->startTrans();
         try {
             $client->delete();
+            JwtService::invalidateSessions('client', $id);
             Event::trigger('after_client_delete', ['client_id' => $id]);
             $client->commit();
         } catch (\Throwable $e) {

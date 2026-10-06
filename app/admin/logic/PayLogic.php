@@ -68,6 +68,14 @@ class PayLogic
             ];
         }
 
+        if ((float)$order['amount'] < 0) {
+            return [
+                'status' => 400,
+                'messages' => lang('invalid_order_amount'),
+                'time' => time(),
+            ];
+        }
+
         // 验证网关
         $gatewayPlugin = $PluginModel
             ->where('name', $gateway)
@@ -118,34 +126,47 @@ class PayLogic
         $ClientCreditModel = new ClientCreditModel();
         $TransactionModel = new TransactionModel();
 
-        $order = $OrderModel
-            ->where('id', $orderId)
-            ->where('client_id', $clientId)
-            ->find();
-
-        if (!$order) {
-            return [
-                'status' => 404,
-                'messages' => lang('order_not_found'),
-                'time' => time(),
-            ];
-        }
-
-        if ($order['status'] !== OrderStatus::Unpaid->value) {
-            return [
-                'status' => 400,
-                'messages' => lang('order_already_paid'),
-                'time' => time(),
-            ];
-        }
-
         $OrderModel->startTrans();
         try {
+            $order = $OrderModel
+                ->where('id', $orderId)
+                ->where('client_id', $clientId)
+                ->lock(true)
+                ->find();
+
+            if (!$order) {
+                $OrderModel->rollback();
+                return [
+                    'status' => 404,
+                    'messages' => lang('order_not_found'),
+                    'time' => time(),
+                ];
+            }
+
+            if ($order['status'] !== OrderStatus::Unpaid->value) {
+                $OrderModel->rollback();
+                return [
+                    'status' => 400,
+                    'messages' => lang('order_already_paid'),
+                    'time' => time(),
+                ];
+            }
+
+            $amount = (float)$order['amount'];
+            if ($amount < 0) {
+                $OrderModel->rollback();
+                return [
+                    'status' => 400,
+                    'messages' => lang('invalid_order_amount'),
+                    'time' => time(),
+                ];
+            }
+
             // 原子扣减余额，WHERE 条件防止并发超扣
             $affected = $ClientModel
                 ->where('id', $clientId)
-                ->where('credit', '>=', (float)$order['amount'])
-                ->dec('credit', (float)$order['amount'])
+                ->where('credit', '>=', $amount)
+                ->dec('credit', $amount)
                 ->update();
 
             if ($affected <= 0) {
@@ -164,26 +185,25 @@ class PayLogic
             $ClientCreditModel->insert([
                 'client_id' => $clientId,
                 'type' => 'pay',
-                'amount' => -$order['amount'],
+                'amount' => -$amount,
                 'balance' => $newCredit,
                 'notes' => lang('credit_pay_order', ['id' => $orderId]),
                 'create_time' => time(),
             ]);
 
             // 标记订单已支付
-            $OrderModel->where('id', $orderId)->update([
+            $order->save([
                 'status' => OrderStatus::Paid->value,
                 'pay_time' => time(),
                 'gateway' => 'credit',
-                'credit_amount' => $order['amount'],
-                'update_time' => time(),
+                'credit_amount' => $amount,
             ]);
 
             // 记录交易
             $TransactionModel->insert([
                 'client_id' => $clientId,
                 'order_id' => $orderId,
-                'amount' => $order['amount'],
+                'amount' => $amount,
                 'gateway' => 'credit',
                 'transaction_id' => 'CREDIT_' . $orderId . '_' . time(),
                 'create_time' => time(),

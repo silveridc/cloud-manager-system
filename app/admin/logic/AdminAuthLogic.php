@@ -162,7 +162,7 @@ class AdminAuthLogic
         $AdminModel->where('id', $AdminID)->update([
             'password' => cmf_password($Password),
         ]);
-        Cache::set('admin_pwd_changed:' . $AdminID, time(), 86400 * 7);
+        JwtService::invalidateSessions('admin', $AdminID);
         return [
             'status' => 200,
             'messages' => lang('password_changed'),

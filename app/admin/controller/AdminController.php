@@ -91,6 +91,7 @@ class AdminController extends AdminBaseController
      * @return int status - 状态码
      * @return string messages - 提示信息
      * @return int admin_id - 管理员自增id
+     * @remark 普通管理员创建账号时只能分配可委派、低层级且权限为自身权限子集的角色
      * @return int time - 时间戳
      * @throws \Exception
      */
@@ -104,7 +105,7 @@ class AdminController extends AdminBaseController
         $result = [
             'status' => 200,
             'messages' => lang('success_message'),
-            'admin_id' => $this->AdminLogic->CreateAdmin($param),
+            'admin_id' => $this->AdminLogic->CreateAdmin($this->adminId(), $param),
             'time' => time(),
         ];
         return json($result);
@@ -121,7 +122,7 @@ class AdminController extends AdminBaseController
      * @param string phone - 手机号
      * @param int status - 管理员状态,1正常0禁用
      * @param string password - 修改密码时的新密码
-     * @param array role_ids - 角色id数组 example:[1,2,3]
+     * @param array role_ids - 角色id数组；普通管理员仅可分配可委派、低于自身最高层级且权限不超出自身的角色 example:[1,2,3]
      * @method put
      * @return json
      * @return int status - 状态码,200ok
@@ -135,7 +136,7 @@ class AdminController extends AdminBaseController
      */
     public function UpdateAdmin(int $id)
     {
-        $this->AdminLogic->UpdateAdmin($id,$this->request->param());
+        $this->AdminLogic->UpdateAdmin($this->adminId(), $id, $this->request->param());
         $result = [
             'status' => 200,
             'messages' => lang('update_success'),
@@ -156,7 +157,7 @@ class AdminController extends AdminBaseController
      */
     public function DeleteAdmin(int $id)
     {
-        $this->AdminLogic->DeleteAdmin($id);
+        $this->AdminLogic->DeleteAdmin($this->adminId(), $id);
         $result = [
             'status' => 200,
             'messages' => lang('delete_success'),

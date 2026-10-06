@@ -37,6 +37,28 @@ class SettlementLogic
             ];
         }
 
+        foreach ($items as &$item) {
+            if (!isset($item['product_id']) || filter_var($item['product_id'], FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]) === false) {
+                return [
+                    'status' => 400,
+                    'messages' => lang('invalid_param'),
+                    'time' => time(),
+                ];
+            }
+
+            if (!isset($item['qty']) || filter_var($item['qty'], FILTER_VALIDATE_INT, ['options' => ['min_range' => 1, 'max_range' => 1000]]) === false) {
+                return [
+                    'status' => 400,
+                    'messages' => lang('invalid_qty'),
+                    'time' => time(),
+                ];
+            }
+
+            $item['product_id'] = (int)$item['product_id'];
+            $item['qty'] = (int)$item['qty'];
+        }
+        unset($item);
+
         $OrderModel = new OrderModel();
         $OrderModel->startTrans();
         try {
@@ -60,8 +82,13 @@ class SettlementLogic
             ]);
 
             foreach ($items as $item) {
-                $product = (new ProductModel())->where('id', $item['product_id'])->find();
+                $product = $ProductModel
+                    ->where('id', $item['product_id'])
+                    ->where('hidden', 0)
+                    ->lock(true)
+                    ->find();
                 if (!$product) {
+                    $OrderModel->rollback();
                     return [
                         'status' => 404,
                         'messages' => lang('product_not_found'),
@@ -112,6 +139,8 @@ class SettlementLogic
                     'product_id' => $product['id'],
                     'host_id' => $hostId,
                     'type' => 'host',
+                    'qty' => $item['qty'],
+                    'stock_reserved' => $product['stock'] >= 0 ? 1 : 0,
                     'amount' => $price,
                     'description' => $product['name'],
                 ];

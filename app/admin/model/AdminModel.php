@@ -27,6 +27,7 @@ class AdminModel extends Model
         'password'         => 'string',
         'operate_password' => 'string',
         'status'           => 'int',
+        'session_version'  => 'int',
         'last_login_time'  => 'int',
         'last_login_ip'    => 'string',
         'last_action_time' => 'int',

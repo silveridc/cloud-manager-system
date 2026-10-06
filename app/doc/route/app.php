@@ -7,4 +7,3 @@ Route::get('list', "DocController/getList");
 Route::get('pass', "DocController/pass");
 Route::post('login', "DocController/login");
 Route::get('info', "DocController/getInfo");
-Route::any('debug', "DocController/debug");

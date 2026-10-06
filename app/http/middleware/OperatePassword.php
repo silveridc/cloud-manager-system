@@ -23,20 +23,26 @@ class OperatePassword
 
         // 判断是管理端还是客户端
         if ($adminId) {
-            return $this->verifyAdmin($adminId, $operatePassword, $request, $next);
+            return $this->verifyAdmin($adminId, $this->tokenFingerprint($request), $operatePassword, $request, $next);
         }
 
         if ($clientId) {
-            return $this->verifyClient($clientId, $operatePassword, $request, $next);
+            return $this->verifyClient($clientId, $this->tokenFingerprint($request), $operatePassword, $request, $next);
         }
 
         return json(['status' => 401, 'messages' => lang('unauthorized'), 'time' => time()], 401);
     }
 
-    private function verifyAdmin(int $adminId, string $password, Request $request, \Closure $next): Response
+    private function tokenFingerprint(Request $request): string
+    {
+        $authorization = $request->header('Authorization', '');
+        return hash('sha256', $authorization);
+    }
+
+    private function verifyAdmin(int $adminId, string $tokenFingerprint, string $password, Request $request, \Closure $next): Response
     {
         // 15 分钟内已验证过则跳过
-        $cacheKey = 'admin_operate_verified:' . $adminId;
+        $cacheKey = 'admin_operate_verified:' . $adminId . ':' . $tokenFingerprint;
         if (Cache::get($cacheKey)) {
             return $next($request);
         }
@@ -66,9 +72,9 @@ class OperatePassword
         return $next($request);
     }
 
-    private function verifyClient(int $clientId, string $password, Request $request, \Closure $next): Response
+    private function verifyClient(int $clientId, string $tokenFingerprint, string $password, Request $request, \Closure $next): Response
     {
-        $cacheKey = 'client_operate_verified:' . $clientId;
+        $cacheKey = 'client_operate_verified:' . $clientId . ':' . $tokenFingerprint;
         if (Cache::get($cacheKey)) {
             return $next($request);
         }

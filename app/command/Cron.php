@@ -2,6 +2,10 @@
 
 namespace app\command;
 
+use app\common\service\OrderLifecycleService;
+use app\common\model\OrderModel;
+use app\common\enum\OrderStatus;
+
 use think\console\Command;
 use think\console\Input;
 use think\console\Output;
@@ -40,9 +44,20 @@ class Cron extends Command
 
     private function minuteTasks(Output $output): void
     {
-        // TODO: 清理过期缓存
-        // TODO: 删除超时未支付订单
-        // TODO: 触发 minute_cron hook
-        $output->writeln('  - Minute tasks done');
+        $expireBefore = time() - (int)config('app.unpaid_order_expire', 1800);
+        $orderIds = (new OrderModel())
+            ->where('status', OrderStatus::Unpaid->value)
+            ->where('create_time', '<=', $expireBefore)
+            ->column('id');
+
+        $lifecycleService = app(OrderLifecycleService::class);
+        $cancelled = 0;
+        foreach ($orderIds as $orderId) {
+            if ($lifecycleService->cancelUnpaidOrder((int)$orderId) === null) {
+                $cancelled++;
+            }
+        }
+
+        $output->writeln('  - Cancelled expired unpaid orders: ' . $cancelled);
     }
 }

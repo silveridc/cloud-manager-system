@@ -61,7 +61,10 @@ class DocController extends BaseController
         if(!$this->checkLogin()){
             return redirect('pass');
         }
-        return view('/index', ['doc' => $this->request->get('name')]);
+        return view('/index', ['doc' => json_encode(
+            (string)$this->request->get('name', ''),
+            JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT
+        )]);
     }
 
     /**
@@ -70,6 +73,10 @@ class DocController extends BaseController
      */
     public function search()
     {
+        if(!$this->checkLogin()) {
+            return $this->request->isAjax() ? json(['status' => 401, 'message' => lang('unauthorized')], 401) : redirect('pass');
+        }
+
         if($this->request->isAjax())
         {
             $data = $this->doc->searchList($this->request->get('query'));
@@ -77,9 +84,6 @@ class DocController extends BaseController
         }
         else
         {
-            if(!$this->checkLogin()){
-                return redirect('pass');
-            }
             $module = $this->doc->getModuleList();
             View::assign('root', $this->request->root());
             return view('/search', ['module' => $module]);
@@ -115,6 +119,10 @@ class DocController extends BaseController
      */
     public function getList()
     {
+        if (!$this->checkLogin()) {
+            return json(['status' => 401, 'message' => lang('unauthorized')], 401);
+        }
+
         $list = $this->doc->getList();
         $list = $this->setIcon($list);
         return json(['firstId'=>'', 'list'=>$list]);
@@ -129,11 +137,24 @@ class DocController extends BaseController
         if($this->checkLogin() == false){
             return redirect('pass');
         }
-        list($class, $action) = explode("::", $this->request->get('name'));
+        $name = (string)$this->request->get('name', '');
+        if (!str_contains($name, '::')) {
+            return json(['status' => 400, 'message' => lang('invalid_param')], 400);
+        }
+
+        [$class, $action] = explode('::', $name, 2);
+        if (!$this->isDocumentedAction($class, $action)) {
+            return json(['status' => 404, 'message' => lang('not_found')], 404);
+        }
+
         $action_doc = $this->doc->getInfo($class, $action);
         if($action_doc)
         {
-            $return = $this->doc->formatReturn($action_doc);
+            $return = nl2br(htmlspecialchars(
+                str_replace(['&nbsp;', '<br>', '<br/>', '<br />'], [' ', "\n", "\n", "\n"], $this->doc->formatReturn($action_doc)),
+                ENT_QUOTES | ENT_SUBSTITUTE,
+                'UTF-8'
+            ));
             $action_doc['header'] = isset($action_doc['header']) ? array_merge($this->doc->__get('public_header'), $action_doc['header']) : [];
             $action_doc['param'] = isset($action_doc['param']) ? array_merge($this->doc->__get('public_param'), $action_doc['param']) : [];
             
@@ -152,6 +173,16 @@ class DocController extends BaseController
         }
     }
 
+    private function isDocumentedAction(string $class, string $action): bool
+    {
+        if (!in_array($class, (array)$this->doc->__get('controller'), true) || !class_exists($class)) {
+            return false;
+        }
+
+        $reflection = new \ReflectionClass($class);
+        return $reflection->hasMethod($action) && $reflection->getMethod($action)->isPublic();
+    }
+
     /**
      * 验证密码
      * @return bool
@@ -159,15 +190,11 @@ class DocController extends BaseController
     protected function checkLogin()
     {
         $pass = $this->doc->__get("password");
-        if($pass){
-            if(cache('apidoc-pass') === sha1($pass)){
-                return true;
-            }else{
-                return false;
-            }
-        }else{
+        if (!$pass) {
             return true;
         }
+
+        return $this->request->session('apidoc-pass') === sha1($pass);
     }
 
     /**
@@ -188,7 +215,8 @@ class DocController extends BaseController
     {
         $pass = $this->doc->__get("password");
         if($pass && $this->request->param('pass') === $pass){
-            cache('apidoc-pass', sha1($pass));
+            $this->request->session()->regenerate(true);
+            $this->request->session()->set('apidoc-pass', sha1($pass));
             $data = ['status' => '200', 'message' => '登录成功'];
         }else if(!$pass){
             $data = ['status' => '200', 'message' => '登录成功'];
@@ -204,75 +232,21 @@ class DocController extends BaseController
      */
     public function debug()
     {
-        $data = $this->request->all();
-        $api_url = $this->request->input('url');
-        $res['status'] = '404';
-        $res['meaasge'] = '接口地址无法访问！';
-        $res['result'] = '';
-        $method =  $this->request->input('method_type', 'GET');
-        $cookie = $this->request->input('cookie');
-        $headers = $this->request->input('header', array());
-        unset($data['method_type']);
-        unset($data['url']);
-        unset($data['cookie']);
-        unset($data['header']);
-        $res['result'] = $this->http_request($api_url, $cookie, $data, $method, $headers);
-        if($res['result']){
-            $res['status'] = '200';
-            $res['meaasge'] = 'success';
-        }
+        $data = [];
+        $api_url = '';
+        $res = [
+            'status' => '404',
+            'meaasge' => '在线调试功能已禁用',
+            'result' => '',
+        ];
         return json($res);
     }
 
     /**
-     * curl模拟请求方法
-     * @param $url
-     * @param $cookie
-     * @param array $data
-     * @param $method
-     * @param array $headers
-     * @return mixed
+     * 在线调试已禁用，保留方法以兼容旧调用。
      */
     private function http_request($url, $cookie, $data = array(), $method = array(), $headers = array()){
-        $curl = curl_init();
-        if(count($data) && $method == "GET"){
-            $data = array_filter($data);
-            $url .= "?".http_build_query($data);
-            $url = str_replace(array('%5B0%5D'), array('[]'), $url);
-        }
-        curl_setopt($curl, CURLOPT_URL, $url);
-        curl_setopt($curl, CURLOPT_SSL_VERIFYPEER, FALSE);
-        curl_setopt($curl, CURLOPT_SSL_VERIFYHOST, FALSE);
-        if (count($headers)){
-            $head = array();
-            foreach ($headers as $name=>$value){
-                $head[] = $name.":".$value;
-            }
-            curl_setopt($curl, CURLOPT_HTTPHEADER, $head);
-        }
-        $method = strtoupper($method);
-        switch($method) {
-            case 'GET':
-                break;
-            case 'POST':
-                curl_setopt($curl, CURLOPT_POST, true);
-                curl_setopt($curl, CURLOPT_POSTFIELDS, $data);
-                break;
-            case 'PUT':
-                curl_setopt($curl, CURLOPT_CUSTOMREQUEST, 'PUT');
-                curl_setopt($curl, CURLOPT_POSTFIELDS, $data);
-                break;
-            case 'DELETE':
-                curl_setopt($curl, CURLOPT_CUSTOMREQUEST, 'DELETE');
-                break;
-        }
-        if (!empty($cookie)){
-            curl_setopt($curl, CURLOPT_COOKIE, $cookie);
-        }
-        curl_setopt($curl, CURLOPT_RETURNTRANSFER, 1);
-        $output = curl_exec($curl);
-        curl_close($curl);
-        return $output;
+        return '';
     }
 
 }

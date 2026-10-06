@@ -81,8 +81,11 @@
         var tab_id = tab_id + "_tab";
         if($("#"+tab_id).length  == 0)
         {
-            // class="active"
-            $("#apiTab").append('<li id="'+ tab_id +'"><a href="#' + tab_id + '_content" data-toggle="tab">'+ title +' <span class="glyphicon glyphicon-remove" onclick="closeTab(this)" style="cursor:pointer"></span></a></li>');
+            var tab = $("<li>").attr("id", tab_id);
+            var link = $("<a>").attr({href: "#" + tab_id + "_content", "data-toggle": "tab"}).text(title + " ");
+            link.append($("<span>").addClass("glyphicon glyphicon-remove").css("cursor", "pointer").on("click", function(){ closeTab(this); }));
+            tab.append(link);
+            $("#apiTab").append(tab);
         }else{
             $("#"+tab_id+" > a").click();
         }
@@ -106,7 +109,7 @@
             success: function(data){
                 var zNodes = data.list;
                 zTree = $.fn.zTree.init($("#zt_navi_tree"), setting, zNodes);
-                var currentId = data.firstId || '<?php echo str_replace('\\', '\\\\', $doc ?? ''); ?>';
+                var currentId = data.firstId || {$doc|default='""'|raw};
                 if(currentId) {
                     var node = zTree.getNodeByParam("name", currentId);
                     loadText(node.tId, node.title, node.name);

@@ -4,6 +4,8 @@ namespace app\common\service;
 
 use Firebase\JWT\JWT;
 use Firebase\JWT\Key;
+use app\admin\model\AdminModel;
+use app\common\model\ClientModel;
 use think\facade\Cache;
 
 /**
@@ -69,6 +71,40 @@ class JwtService
     }
 
     /**
+     * 使某个主体的全部 Token 失效。
+     */
+    public static function invalidateSessions(string $type, int $id): void
+    {
+        if ($type === 'admin') {
+            (new AdminModel())->where('id', $id)->inc('session_version')->update();
+            return;
+        }
+
+        if ($type === 'client') {
+            (new ClientModel())->where('id', $id)->inc('session_version')->update();
+            return;
+        }
+
+        throw new \InvalidArgumentException('Unsupported token type');
+    }
+
+    /**
+     * 获取主体当前会话版本。
+     */
+    public static function getSessionVersion(string $type, int $id): int
+    {
+        if ($type === 'admin') {
+            return (int)(new AdminModel())->where('id', $id)->value('session_version');
+        }
+
+        if ($type === 'client') {
+            return (int)(new ClientModel())->where('id', $id)->value('session_version');
+        }
+
+        throw new \InvalidArgumentException('Unsupported token type');
+    }
+
+    /**
      * 创建 JWT
      */
     private static function create(array $info, int $expire, string $type): string
@@ -82,6 +118,7 @@ class JwtService
             'nbf' => $now,
             'exp' => $now + $expire,
             'id' => $info['id'],
+            'session_version' => self::getSessionVersion($type, (int)$info['id']),
             'name' => $info['name'] ?? '',
             'type' => $type,
         ];

@@ -55,7 +55,7 @@ class ProductLogic
      */
     public function GetProductInfo(int $id): ?array
     {
-        return $this->entity->detail($id);
+        return $this->entity->detail($id, false);
     }
 
     /**

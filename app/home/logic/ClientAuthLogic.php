@@ -267,6 +267,6 @@ class ClientAuthLogic
             'password' => cmf_password($newPassword),
         ]);
 
-        Cache::set('client_pwd_changed:' . $clientId, time(), 86400 * 7);
+        JwtService::invalidateSessions('client', $clientId);
     }
 }

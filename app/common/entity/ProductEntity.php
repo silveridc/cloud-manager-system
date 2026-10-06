@@ -90,9 +90,9 @@ class ProductEntity extends Entity
      * @author zhaoyj
      * @version v1
      */
-    public function detail(int $id): ?array
+    public function detail(int $id, bool $publicOnly = false): ?array
     {
-        $product = $this->model()->db()
+        $query = $this->model()->db()
             ->alias('p')
             ->leftJoin('product_group pg', 'pg.id = p.product_group_id')
             ->leftJoin('server_group sg', 'sg.id = p.server_group_id')
@@ -100,8 +100,13 @@ class ProductEntity extends Entity
                 'p.*',
                 'pg.name as group_name', 'sg.name as server_group_name',
             ])
-            ->where('p.id', $id)
-            ->find();
+            ->where('p.id', $id);
+
+        if ($publicOnly) {
+            $query->where('p.hidden', 0);
+        }
+
+        $product = $query->find();
 
         if (!$product) {
             return null;

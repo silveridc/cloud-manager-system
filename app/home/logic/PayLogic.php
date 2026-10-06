@@ -78,6 +78,14 @@ class PayLogic
             ];
         }
 
+        if ((float)$order->getAttr('amount') < 0) {
+            return [
+                'status' => 400,
+                'messages' => lang('invalid_order_amount'),
+                'time' => time(),
+            ];
+        }
+
         $gatewayPlugin = $this->pluginModel
             ->where('name', $gateway)
             ->where('type', 'gateway')
@@ -115,33 +123,44 @@ class PayLogic
      * @param int $orderId - 订单ID
      * @return array|void
      */
-    public function creditPay(int $clientId, int $orderId)
+    public function creditPay(int $clientId, int $orderId): ?array
     {
-        $order = $this->orderModel
-            ->where('id', $orderId)
-            ->where('client_id', $clientId)
-            ->find();
-
-        if (!$order) {
-            return [
-                'status' => 404,
-                'messages' => lang('order_not_found'),
-                'time' => time(),
-            ];
-        }
-
-        if ($order->getAttr('status') !== OrderStatus::Unpaid->value) {
-            return [
-                'status' => 400,
-                'messages' => lang('order_already_paid'),
-                'time' => time(),
-            ];
-        }
-
-        $amount = (float)$order->getAttr('amount');
-
-        $order->startTrans();
+        $this->orderModel->startTrans();
         try {
+            $order = $this->orderModel
+                ->where('id', $orderId)
+                ->where('client_id', $clientId)
+                ->lock(true)
+                ->find();
+
+            if (!$order) {
+                $this->orderModel->rollback();
+                return [
+                    'status' => 404,
+                    'messages' => lang('order_not_found'),
+                    'time' => time(),
+                ];
+            }
+
+            if ($order->getAttr('status') !== OrderStatus::Unpaid->value) {
+                $this->orderModel->rollback();
+                return [
+                    'status' => 400,
+                    'messages' => lang('order_already_paid'),
+                    'time' => time(),
+                ];
+            }
+
+            $amount = (float)$order->getAttr('amount');
+            if ($amount < 0) {
+                $this->orderModel->rollback();
+                return [
+                    'status' => 400,
+                    'messages' => lang('invalid_order_amount'),
+                    'time' => time(),
+                ];
+            }
+
             // 原子扣减余额，WHERE 条件防止并发超扣
             $ClientModel = new ClientModel();
             $affected = $ClientModel
@@ -151,7 +170,7 @@ class PayLogic
                 ->update();
 
             if ($affected <= 0) {
-                $order->rollback();
+                $this->orderModel->rollback();
                 return [
                     'status' => 400,
                     'messages' => lang('insufficient_credit'),
@@ -192,9 +211,10 @@ class PayLogic
                 'client_id' => $clientId,
             ]);
 
-            $order->commit();
+            $this->orderModel->commit();
+            return null;
         } catch (\Throwable $e) {
-            $order->rollback();
+            $this->orderModel->rollback();
             throw $e;
         }
     }

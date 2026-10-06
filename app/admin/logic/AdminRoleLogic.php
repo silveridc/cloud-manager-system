@@ -5,9 +5,11 @@ use think\db\exception\DataNotFoundException;
 use think\db\exception\DbException;
 use think\db\exception\ModelNotFoundException;
 use think\facade\Cache;
+use app\common\service\JwtService;
 use app\admin\model\AdminRoleModel;
 use app\admin\model\AdminRuleModel;
 use app\admin\model\AdminRoleLinkModel;
+use app\admin\service\AdminDelegationService;
 /**
  * 管理员权限规则逻辑
  * @author zhaoyj
@@ -15,6 +17,13 @@ use app\admin\model\AdminRoleLinkModel;
  */
 class AdminRoleLogic
 {
+    private AdminDelegationService $delegationService;
+
+    public function __construct(AdminDelegationService $delegationService)
+    {
+        $this->delegationService = $delegationService;
+    }
+
     /**
      * 分页获取管理员角色列表
      * @author zhaoyj
@@ -77,21 +86,33 @@ class AdminRoleLogic
      * @return int id - 规则id
      * @throws \Throwable
      */
-    public function CreateAdminRole(array $params): int
+    public function CreateAdminRole(int $actorId, array $params): int
     {
         $AdminRoleModel = new AdminRoleModel();
         $AdminRoleModel->startTrans();
         try {
+            $this->delegationService->lockDelegationMutex();
+            $definition = $this->delegationService->assertRoleDefinitionAllowed(
+                $actorId,
+                $params['level'] ?? 1,
+                $params['rules'] ?? []
+            );
+            $delegable = $this->delegationService->normalizeDelegable(
+                $actorId,
+                $params['delegable'] ?? ($actorId === 1 ? 0 : 1)
+            );
             $id = (int)$AdminRoleModel->insertGetId([
                 'name' => $params['name'],
                 'description' => $params['description'] ?? '',
+                'level' => $definition['level'],
+                'delegable' => $delegable,
                 'create_time' => time(),
                 'update_time' => time(),
             ]);
 
-            if (!empty($params['rules'])) {
+            if (!empty($definition['rules'])) {
                 $rules = [];
-                foreach ($params['rules'] as $rule) {
+                foreach ($definition['rules'] as $rule) {
                     $rules[] = ['role_id' => $id, 'name' => $rule];
                 }
                 $AdminRuleModel = new AdminRuleModel();
@@ -114,17 +135,35 @@ class AdminRoleLogic
      * @param array $params - 参考\app\admin\controller\AdminRoleController::UpdateAdminRole
      * @return void
      */
-    public function UpdateAdminRole(int $id, array $params): void
+    public function UpdateAdminRole(int $actorId, int $id, array $params): void
     {
         $AdminRoleModel = new AdminRoleModel();
-        $role = $AdminRoleModel->where('id', $id)->find();
-        if (!$role) {
-            throw new \think\exception\ValidateException(lang('role_not_found'));
-        }
-
         $AdminRoleModel->startTrans();
         try {
-            $updateData = ['update_time' => time()];
+            $this->delegationService->lockDelegationMutex();
+            $adminIds = (new AdminRoleLinkModel())->where('role_id', $id)->column('admin_id');
+            $this->delegationService->lockRoleMembers($actorId, $adminIds);
+            $this->delegationService->assertCanManageRole($actorId, $id);
+
+            $role = $AdminRoleModel->where('id', $id)->lock(true)->find();
+            if (!$role) {
+                throw new \think\exception\ValidateException(lang('role_not_found'));
+            }
+
+            $definition = $this->delegationService->assertRoleDefinitionAllowed(
+                $actorId,
+                $params['level'] ?? $role->getAttr('level'),
+                $params['rules'] ?? (new AdminRuleModel())->where('role_id', $id)->column('name')
+            );
+            $delegable = isset($params['delegable'])
+                ? $this->delegationService->normalizeDelegable($actorId, $params['delegable'])
+                : (int)$role->getAttr('delegable');
+
+            $updateData = [
+                'update_time' => time(),
+                'level' => $definition['level'],
+                'delegable' => $delegable,
+            ];
             if (isset($params['name'])) {
                 $updateData['name'] = $params['name'];
             }
@@ -136,22 +175,23 @@ class AdminRoleLogic
             if (isset($params['rules'])) {
                 $AdminRuleModel = new AdminRuleModel();
                 $AdminRuleModel->where('role_id', $id)->delete();
-                if (!empty($params['rules'])) {
+                if (!empty($definition['rules'])) {
                     $rules = [];
-                    foreach ($params['rules'] as $rule) {
+                    foreach ($definition['rules'] as $rule) {
                         $rules[] = ['role_id' => $id, 'name' => $rule];
                     }
                     $AdminRuleModel->insertAll($rules);
                 }
-
-                // 清除该角色关联的所有管理员缓存
-                $adminIds = (new AdminRoleLinkModel())->where('role_id', $id)
-                    ->column('admin_id');
-                foreach ($adminIds as $adminId) {
-                    Cache::delete('admin_rules:' . $adminId);
-                }
             }
+            foreach ($adminIds as $adminId) {
+                JwtService::invalidateSessions('admin', (int)$adminId);
+            }
+
             $AdminRoleModel->commit();
+
+            foreach ($adminIds as $adminId) {
+                Cache::delete('admin_rules:' . $adminId);
+            }
         } catch (\Throwable $e) {
             $AdminRoleModel->rollback();
             throw $e;
@@ -169,21 +209,26 @@ class AdminRoleLogic
      * @throws \think\db\exception\DbException
      * @throws \think\db\exception\ModelNotFoundException
      */
-    public function DeleteAdminRole(int $id): void
+    public function DeleteAdminRole(int $actorId, int $id): void
     {
         $AdminRoleModel = new AdminRoleModel();
-        $role = $AdminRoleModel->where('id', $id)->find();
-        if (!$role) {
-            throw new \think\exception\ValidateException(lang('role_not_found'));
-        }
-
-        $linkCount = (new AdminRoleLinkModel())->where('role_id', $id)->count();
-        if ($linkCount > 0) {
-            throw new \think\exception\ValidateException(lang('role_in_use'));
-        }
-
         $AdminRoleModel->startTrans();
         try {
+            $this->delegationService->lockDelegationMutex();
+            $adminIds = (new AdminRoleLinkModel())->where('role_id', $id)->column('admin_id');
+            $this->delegationService->lockRoleMembers($actorId, $adminIds);
+            $this->delegationService->assertCanManageRole($actorId, $id);
+
+            $role = $AdminRoleModel->where('id', $id)->lock(true)->find();
+            if (!$role) {
+                throw new \think\exception\ValidateException(lang('role_not_found'));
+            }
+
+            $currentAdminIds = (new AdminRoleLinkModel())->where('role_id', $id)->column('admin_id');
+            if (!empty($currentAdminIds)) {
+                throw new \think\exception\ValidateException(lang('role_in_use'));
+            }
+
             $AdminRoleModel->where('id', $id)->delete();
             $AdminRuleModel = new AdminRuleModel();
             $AdminRuleModel->where('role_id', $id)->delete();

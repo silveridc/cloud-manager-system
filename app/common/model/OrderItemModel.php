@@ -22,6 +22,8 @@ class OrderItemModel extends Model
         'product_id'  => 'int',
         'host_id'     => 'int',
         'type'        => 'string',
+        'qty'         => 'int',
+        'stock_reserved' => 'int',
         'amount'      => 'decimal',
         'description' => 'string',
     ];

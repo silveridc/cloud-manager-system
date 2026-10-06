@@ -70,9 +70,16 @@
                 success: function (data) {
                     $(".result .list-group").html('');
                     $.each(data, function(index, doc){
-                        var item = '<a href="javascript:void(0)" class="list-group-item" name="'+ doc.name +'" title="'+ doc.title +'" doc>' +
-                            '<span class="badge">'+ doc.author +'</span>' +
-                            ''+ doc.title + '<span class="text-primary">('+ doc.url +')</span>'+'</a>';
+                        var item = $("<a>", {
+                            href: "javascript:void(0)",
+                            "class": "list-group-item",
+                            name: doc.name,
+                            title: doc.title,
+                            doc: ""
+                        });
+                        item.append($("<span>").addClass("badge").text(doc.author || ""));
+                        item.append(document.createTextNode(doc.title || ""));
+                        item.append($("<span>").addClass("text-primary").text("(" + (doc.url || "") + ")"));
                         $(".result .list-group").append(item);
                     });
                     $btn.button('reset');

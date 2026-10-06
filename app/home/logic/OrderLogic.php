@@ -5,6 +5,7 @@ namespace app\home\logic;
 use app\common\enum\OrderStatus;
 use think\facade\Event;
 use app\common\entity\OrderEntity;
+use app\common\service\OrderLifecycleService;
 use app\common\model\OrderModel;
 
 /**
@@ -16,11 +17,13 @@ class OrderLogic
 {
     protected OrderEntity $entity;
     protected OrderModel $model;
+    protected OrderLifecycleService $lifecycleService;
 
-    public function __construct(OrderEntity $entity, OrderModel $model)
+    public function __construct(OrderEntity $entity, OrderModel $model, OrderLifecycleService $lifecycleService)
     {
         $this->entity = $entity;
         $this->model = $model;
+        $this->lifecycleService = $lifecycleService;
     }
 
     /**
@@ -59,43 +62,6 @@ class OrderLogic
      */
     public function CancelOrder(int $id, ?int $clientId = null)
     {
-        $order = $this->model->find($id);
-        if (!$order) {
-            return [
-                'status' => 404,
-                'messages' => lang('order_not_found'),
-                'time' => time(),
-            ];
-        }
-
-        if ($clientId !== null && $order->getAttr('client_id') != $clientId) {
-            return [
-                'status' => 404,
-                'messages' => lang('order_not_found'),
-                'time' => time(),
-            ];
-        }
-
-        if ($order->getAttr('status') !== OrderStatus::Unpaid->value) {
-            return [
-                'status' => 400,
-                'messages' => lang('order_cannot_cancel'),
-                'time' => time(),
-            ];
-        }
-
-        $order->startTrans();
-        try {
-            $order->save([
-                'status' => OrderStatus::Cancelled->value,
-            ]);
-
-            Event::trigger('after_order_cancel', ['order_id' => $id]);
-
-            $order->commit();
-        } catch (\Throwable $e) {
-            $order->rollback();
-            throw $e;
-        }
+        return $this->lifecycleService->cancelUnpaidOrder($id, $clientId);
     }
 }

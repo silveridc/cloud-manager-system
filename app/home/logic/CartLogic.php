@@ -82,8 +82,19 @@ class CartLogic
             ];
         }
 
+        // 验证数量
+        $qty = $params['qty'] ?? 1;
+        if (filter_var($qty, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1, 'max_range' => 1000]]) === false) {
+            return [
+                'status' => 400,
+                'messages' => lang('invalid_qty'),
+                'time' => time(),
+            ];
+        }
+        $qty = (int)$qty;
+
         // 检查库存
-        if ($product['stock'] >= 0 && $product['stock'] < ($params['qty'] ?? 1)) {
+        if ($product['stock'] >= 0 && $product['stock'] < $qty) {
             return [
                 'status' => 400,
                 'messages' => lang('product_out_of_stock'),
@@ -99,7 +110,7 @@ class CartLogic
         $cartItem->save([
             'client_id' => $clientId,
             'product_id' => $params['product_id'],
-            'qty' => $params['qty'] ?? 1,
+            'qty' => $qty,
             'config_options' => !empty($params['config_options']) ? json_encode($params['config_options'], JSON_UNESCAPED_UNICODE) : '',
             'billing_cycle' => $params['billing_cycle'] ?? $product['billing_cycle'],
             'position' => $maxPosition + 1,
@@ -142,7 +153,14 @@ class CartLogic
 
         $updateData = [];
         if (isset($params['qty'])) {
-            $updateData['qty'] = max(1, (int)$params['qty']);
+            if (filter_var($params['qty'], FILTER_VALIDATE_INT, ['options' => ['min_range' => 1, 'max_range' => 1000]]) === false) {
+                return [
+                    'status' => 400,
+                    'messages' => lang('invalid_qty'),
+                    'time' => time(),
+                ];
+            }
+            $updateData['qty'] = (int)$params['qty'];
         }
         if (isset($params['config_options'])) {
             $updateData['config_options'] = json_encode($params['config_options'], JSON_UNESCAPED_UNICODE);

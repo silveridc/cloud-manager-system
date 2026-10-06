@@ -39,9 +39,14 @@ class ClientAuth
             return json(['status' => 401, 'messages' => lang('token_invalid'), 'time' => time()], 401);
         }
 
-        // 检查密码是否已变更
+        // 检查会话版本（密码或状态变更后强制重新登录）
+        if (($payload['session_version'] ?? 0) !== JwtService::getSessionVersion('client', (int)$payload['id'])) {
+            return json(['status' => 401, 'messages' => lang('password_changed_relogin'), 'time' => time()], 401);
+        }
+
+        // 检查密码是否已变更（兼容旧 Token）
         $pwdChanged = Cache::get('client_pwd_changed:' . $payload['id']);
-        if ($pwdChanged && $pwdChanged > ($payload['nbf'] ?? 0)) {
+        if ($pwdChanged && $pwdChanged >= ($payload['nbf'] ?? 0)) {
             return json(['status' => 401, 'messages' => lang('password_changed_relogin'), 'time' => time()], 401);
         }
 

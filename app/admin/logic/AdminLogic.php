@@ -1,8 +1,10 @@
 <?php
 namespace app\admin\logic;
 use think\facade\Cache;
+use app\common\service\JwtService;
 use app\admin\model\AdminModel;
 use app\admin\model\AdminRoleLinkModel;
+use app\admin\service\AdminDelegationService;
 
 /**
  * 管理员后台逻辑类
@@ -12,6 +14,13 @@ use app\admin\model\AdminRoleLinkModel;
  */
 class AdminLogic
 {
+    private AdminDelegationService $delegationService;
+
+    public function __construct(AdminDelegationService $delegationService)
+    {
+        $this->delegationService = $delegationService;
+    }
+
     /**
      * 获取管理员列表
      * @author zhaoyj
@@ -57,7 +66,7 @@ class AdminLogic
             $roleLinks = (new AdminRoleLinkModel())->alias('arlk')
                 ->leftJoin('admin_role arl', 'arl.id = arlk.role_id')
                 ->whereIn('arlk.admin_id', array_column($list, 'id'))
-                ->field('arlk.admin_id, arl.id as role_id, arl.name as role_name')
+                ->field('arlk.admin_id, arl.id as role_id, arl.name as role_name, arl.level, arl.delegable')
                 ->select()
                 ->toArray();
             $RoleLink = [];
@@ -65,6 +74,8 @@ class AdminLogic
                 $RoleLink[$link['admin_id']][] = [
                     'id' => $link['role_id'],
                     'name' => $link['role_name'],
+                    'level' => (int)$link['level'],
+                    'delegable' => (int)$link['delegable'],
                 ];
             }
             foreach ($list as &$item) {
@@ -107,7 +118,7 @@ class AdminLogic
         $admin['roles'] = (new AdminRoleLinkModel())->alias('arlk')
             ->leftJoin('admin_role arl', 'arl.id = arlk.role_id')
             ->where('arlk.admin_id', $id)
-            ->field('arl.id, arl.name')
+            ->field('arl.id, arl.name, arl.level, arl.delegable')
             ->select()
             ->toArray();
 
@@ -122,11 +133,13 @@ class AdminLogic
      * @return int id - 管理员自增id
      * @throws \Exception
      */
-    public function CreateAdmin(array $params): int
+    public function CreateAdmin(int $actorId, array $params): int
     {
         $AdminModel = new AdminModel();
         $AdminModel->startTrans();
         try {
+            $this->delegationService->lockDelegationMutex();
+            $roleIds = $this->delegationService->assertRolesAssignable($actorId, $params['role_ids'] ?? []);
             $id = (int)$AdminModel->insertGetId([
                 'name' => $params['name'], //管理员名称
                 'email' => $params['email'] ?? '', //管理员邮件
@@ -136,9 +149,9 @@ class AdminLogic
                 'create_time' => time(), //管理员创建时间
                 'update_time' => time(), //管理员更新时间
             ]);
-            if (!empty($params['role_ids'])) {
+            if (!empty($roleIds)) {
                 $links = [];
-                foreach ($params['role_ids'] as $roleId) {
+                foreach ($roleIds as $roleId) {
                     $links[] = ['admin_id' => $id, 'role_id' => (int)$roleId];
                 }
                 $AdminModel->name('admin_role_link')->insertAll($links);
@@ -147,7 +160,7 @@ class AdminLogic
             return $id;
         } catch (\Throwable $e) {
             $AdminModel->rollback();
-            throw new \Exception($e);
+            throw $e;
         }
     }
 
@@ -163,43 +176,61 @@ class AdminLogic
      * @throws \think\db\exception\ModelNotFoundException
      * @throws \Exception
      */
-    public function UpdateAdmin(int $id, array $params): void
+    public function UpdateAdmin(int $actorId, int $id, array $params): void
     {
-        $AdminModel = (new AdminModel())->where('id', $id)->find();
-
-        if (!$AdminModel) {
-            throw new \think\exception\ValidateException(lang('admin_not_found'));
-        }
-        $data = [];
-        foreach (['name', 'email', 'phone', 'status'] as $field) {
-            if (isset($params[$field])) {
-                $data[$field] = $params[$field];
-            }
-        }
-        if (!empty($params['password'])) {
-            $data['password'] = cmf_password($params['password']);
-        }
-        //开始事务
+        $AdminModel = new AdminModel();
         $AdminModel->startTrans();
         try {
+            $this->delegationService->lockDelegationMutex();
+            $this->delegationService->lockRoleMembers($actorId, [$id]);
+            $this->delegationService->assertCanManageAdmin($actorId, $id);
+            $roleIds = isset($params['role_ids'])
+                ? $this->delegationService->assertRolesAssignable($actorId, $params['role_ids'])
+                : null;
+
+            $AdminModel = $AdminModel->where('id', $id)->lock(true)->find();
+
+            if (!$AdminModel) {
+                throw new \think\exception\ValidateException(lang('admin_not_found'));
+            }
+            $data = [];
+            foreach (['name', 'email', 'phone', 'status'] as $field) {
+                if (isset($params[$field])) {
+                    $data[$field] = $params[$field];
+                }
+            }
+            if (!empty($params['password'])) {
+                $data['password'] = cmf_password($params['password']);
+            }
+
             $AdminModel->save($data);
 
-            if (isset($params['role_ids'])) {
+            $mustInvalidateSessions = isset($data['password'])
+                || (isset($data['status']) && (int)$data['status'] !== 1)
+                || $roleIds !== null;
+
+            if ($roleIds !== null) {
                 $AdminRoleLinkModel = new AdminRoleLinkModel();
                 $AdminRoleLinkModel->where('admin_id', $id)->delete();
-                if (!empty($params['role_ids'])) {
+                if (!empty($roleIds)) {
                     $links = [];
-                    foreach ($params['role_ids'] as $roleId) {
+                    foreach ($roleIds as $roleId) {
                         $links[] = ['admin_id' => $id, 'role_id' => (int)$roleId];
                     }
                     $AdminRoleLinkModel->insertAll($links);
                 }
+            }
+            if ($mustInvalidateSessions) {
+                JwtService::invalidateSessions('admin', $id);
+            }
+
+            $AdminModel->commit();
+            if ($roleIds !== null) {
                 Cache::delete('admin_rules:' . $id);
             }
-            $AdminModel->commit();
         } catch (\Throwable $e) {
             $AdminModel->rollback();
-            throw new \Exception($e);
+            throw $e;
         }
     }
 
@@ -214,27 +245,32 @@ class AdminLogic
      * @throws \think\db\exception\DbException
      * @throws \think\db\exception\ModelNotFoundException
      */
-    public function DeleteAdmin(int $id): void
+    public function DeleteAdmin(int $actorId, int $id): void
     {
         $AdminModel = new AdminModel();
-        if ($id === 1) {
-            throw new \think\exception\ValidateException(lang('cannot_delete_super_admin'));
-        }
-
-        $admin = $AdminModel->where('id', $id)->find();
-        if (!$admin) {
-            throw new \think\exception\ValidateException(lang('admin_not_found'));
-        }
-
         $AdminModel->startTrans();
         try {
+            $this->delegationService->lockDelegationMutex();
+            $this->delegationService->lockRoleMembers($actorId, [$id]);
+            $this->delegationService->assertCanManageAdmin($actorId, $id);
+
+            if ($id === 1) {
+                throw new \think\exception\ValidateException(lang('cannot_delete_super_admin'));
+            }
+
+            $admin = $AdminModel->where('id', $id)->lock(true)->find();
+            if (!$admin) {
+                throw new \think\exception\ValidateException(lang('admin_not_found'));
+            }
+
             $AdminModel->where('id', $id)->delete();
             (new AdminRoleLinkModel())->where('admin_id', $id)->delete();
-            Cache::delete('admin_rules:' . $id);
+            JwtService::invalidateSessions('admin', $id);
             $AdminModel->commit();
+            Cache::delete('admin_rules:' . $id);
         } catch (\Throwable $e) {
             $AdminModel->rollback();
-            throw new \Exception($e);
+            throw $e;
         }
     }
 }
